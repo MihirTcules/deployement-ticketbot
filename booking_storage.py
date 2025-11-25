@@ -18,11 +18,21 @@ DATA_DIR = os.getenv("DATA_DIR", ".")
 
 # Ensure data directory exists
 if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    logger.info(f"📁 Created data directory: {DATA_DIR}")
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        logger.info(f"📁 Created data directory: {DATA_DIR}")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not create data directory {DATA_DIR}: {e}")
+        logger.warning("⚠️ Using current directory for data storage")
+        DATA_DIR = "."
 
 BOOKINGS_FILE = os.path.join(DATA_DIR, "scheduled_bookings.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "scheduled_bookings.backup.json")
+
+# Warn if using /tmp (data will be lost on restart)
+if DATA_DIR == "/tmp":
+    logger.warning("⚠️ Using /tmp for bookings - data will be lost on restart!")
+    logger.warning("⚠️ For persistent storage, upgrade to a paid Render plan with disk storage")
 
 
 class BookingStorage:

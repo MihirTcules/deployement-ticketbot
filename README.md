@@ -11,6 +11,14 @@ A production-ready Python bot for automated booking on Recreation.gov with web i
 - GitHub account
 - Chrome browser with extension installed
 
+### ⚠️ Free Plan Limitations
+The free plan does NOT include persistent disk storage. This means:
+- Bookings and configuration will be lost on restart
+- Best for same-session bookings (schedule and execute immediately)
+- See [FREE_PLAN_GUIDE.md](FREE_PLAN_GUIDE.md) for details and workarounds
+
+**For persistent storage, upgrade to a paid plan ($7/month) or run locally.**
+
 ### Deployment Steps
 
 1. **Fork/Clone this repository**
@@ -33,17 +41,17 @@ A production-ready Python bot for automated booking on Recreation.gov with web i
    - **Important**: Set the `ENCRYPTION_KEY` environment variable with the key you generated
 
 4. **Configure Environment Variables** (if not using render.yaml)
-   
+
    Required variables:
    - `ENCRYPTION_KEY` - Your generated encryption key
    - `TIMEZONE` - Your timezone (default: Asia/Kolkata)
    - `PORT` - Port for Flask (default: 5000)
-   - `DATA_DIR` - Data directory (use: /opt/render/project/data)
+   - `DATA_DIR` - Data directory (free plan: `/tmp`, paid plan: `/opt/render/project/data`)
 
-5. **Add Persistent Disk**
-   - In Render dashboard, go to your service
-   - Navigate to "Disks" tab
-   - Add disk: Mount path `/opt/render/project/data`, Size: 1GB
+5. **Add Persistent Disk** (Paid Plans Only)
+   - ⚠️ **Free plan does NOT support persistent disks**
+   - For paid plans: Add disk with mount path `/opt/render/project/data`, Size: 1GB
+   - See [FREE_PLAN_GUIDE.md](FREE_PLAN_GUIDE.md) for free plan workarounds
 
 6. **Deploy!**
    - Click "Create Web Service"

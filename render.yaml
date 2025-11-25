@@ -2,7 +2,7 @@ services:
   - type: web
     name: recreation-booking-bot
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
@@ -21,14 +21,10 @@ services:
       - key: MAX_QUANTITY_PER_TAB
         value: 50
       - key: DATA_DIR
-        value: /opt/render/project/data
+        value: /tmp
       - key: ENABLE_STANDALONE_WEBSOCKET
         value: false
       - key: ENCRYPTION_KEY
         generateValue: true
         sync: false
-    disk:
-      name: booking-data
-      mountPath: /opt/render/project/data
-      sizeGB: 1
 

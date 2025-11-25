@@ -16,11 +16,21 @@ DATA_DIR = os.getenv("DATA_DIR", ".")
 
 # Ensure data directory exists
 if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    logger.info(f"📁 Created data directory: {DATA_DIR}")
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        logger.info(f"📁 Created data directory: {DATA_DIR}")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not create data directory {DATA_DIR}: {e}")
+        logger.warning("⚠️ Using current directory for data storage")
+        DATA_DIR = "."
 
 CONFIG_FILE = os.path.join(DATA_DIR, "bot_config.json")
 KEY_FILE = os.path.join(DATA_DIR, ".config_key")
+
+# Warn if using /tmp (data will be lost on restart)
+if DATA_DIR == "/tmp":
+    logger.warning("⚠️ Using /tmp for data storage - data will be lost on restart!")
+    logger.warning("⚠️ For persistent storage, upgrade to a paid Render plan with disk storage")
 
 class ConfigManager:
     """Manages bot configuration with secure password storage"""
