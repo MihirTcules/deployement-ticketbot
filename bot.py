@@ -37,6 +37,10 @@ WEBSOCKET_HOST = os.getenv("WEBSOCKET_HOST", "0.0.0.0")
 WEBSOCKET_PORT = int(os.getenv("WEBSOCKET_PORT", "8765"))
 MAX_QUANTITY_PER_TAB = int(os.getenv("MAX_QUANTITY_PER_TAB", "50"))
 
+# Detect if running on Render.com (or production environment)
+IS_PRODUCTION = os.getenv("RENDER") is not None or os.getenv("FLASK_ENV") == "production"
+ENABLE_STANDALONE_WEBSOCKET = os.getenv("ENABLE_STANDALONE_WEBSOCKET", "false").lower() == "true"
+
 connected_clients = set()
 web_clients = set()  # Track web interface clients
 pending_tasks = {}  # Track pending URL triggers
@@ -1503,22 +1507,44 @@ async def main():
         flask_thread.start()
         logger.info(f"🌐 Flask web server starting on http://{FLASK_HOST}:{FLASK_PORT}")
 
-        server_task = asyncio.create_task(start_websocket_server())
-        cli_task_obj = asyncio.create_task(cli_task())
+        tasks = []
 
-        # Wait for either task to complete (CLI exit will trigger shutdown)
-        _, pending = await asyncio.wait(
-            [server_task, cli_task_obj],
-            return_when=asyncio.FIRST_COMPLETED
-        )
+        # Only start standalone WebSocket server if enabled (for local development)
+        if ENABLE_STANDALONE_WEBSOCKET and not IS_PRODUCTION:
+            logger.info(f"🔌 Starting standalone WebSocket server on port {WEBSOCKET_PORT}")
+            server_task = asyncio.create_task(start_websocket_server())
+            tasks.append(server_task)
+        else:
+            if IS_PRODUCTION:
+                logger.info("🌐 Production mode: Using Flask-Sock for WebSocket (port 8765 disabled)")
+                logger.info(f"📡 WebSocket available at: wss://your-domain/ws")
+            else:
+                logger.info("💡 Standalone WebSocket disabled. Using Flask-Sock only.")
+                logger.info(f"📡 WebSocket available at: ws://{FLASK_HOST}:{FLASK_PORT}/ws")
 
-        # Cancel remaining tasks
-        for task in pending:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        # Start CLI task (only if not in production)
+        if not IS_PRODUCTION:
+            cli_task_obj = asyncio.create_task(cli_task())
+            tasks.append(cli_task_obj)
+        else:
+            logger.info("🚀 Production mode: CLI disabled, running as web service")
+            # In production, just keep running forever
+            await asyncio.Future()  # Run forever
+
+        # If we have tasks (local development), wait for them
+        if tasks:
+            _, pending = await asyncio.wait(
+                tasks,
+                return_when=asyncio.FIRST_COMPLETED
+            )
+
+            # Cancel remaining tasks
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         logger.info("✅ Bot shutdown complete")
 

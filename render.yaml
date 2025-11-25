@@ -10,10 +10,6 @@ services:
         value: 3.11.0
       - key: PORT
         value: 5000
-      - key: WEBSOCKET_PORT
-        value: 8765
-      - key: WEBSOCKET_HOST
-        value: 0.0.0.0
       - key: FLASK_HOST
         value: 0.0.0.0
       - key: FLASK_ENV
@@ -24,14 +20,10 @@ services:
         value: Asia/Kolkata
       - key: MAX_QUANTITY_PER_TAB
         value: 50
-      - key: MAX_MESSAGE_SIZE
-        value: 1048576
-      - key: PING_INTERVAL
-        value: 20
-      - key: PING_TIMEOUT
-        value: 20
       - key: DATA_DIR
         value: /opt/render/project/data
+      - key: ENABLE_STANDALONE_WEBSOCKET
+        value: false
       - key: ENCRYPTION_KEY
         generateValue: true
         sync: false

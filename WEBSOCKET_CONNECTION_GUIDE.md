@@ -9,15 +9,16 @@ https://recreation-booking-bot.onrender.com
 
 ### WebSocket URLs
 
-Your bot runs **TWO** servers:
+**IMPORTANT:** On Render.com, the bot uses **Flask-Sock** for WebSocket connections (not a standalone WebSocket server).
 
-1. **Flask Web Server** (Port 5000)
-   - URL: `https://your-domain.onrender.com`
-   - For the web interface
+**Production (Render.com):**
+- **WebSocket URL:** `wss://your-domain.onrender.com/ws`
+- All WebSocket connections go through Flask on port 5000
+- Port 8765 is **disabled** in production
 
-2. **WebSocket Server** (Port 8765)
-   - URL: `wss://your-domain.onrender.com:8765`
-   - For Chrome extension and real-time communication
+**Local Development:**
+- **WebSocket URL:** `ws://localhost:5000/ws`
+- Can optionally enable standalone WebSocket on port 8765
 
 ---
 
@@ -52,7 +53,8 @@ In your Chrome extension's background script or content script:
 
 ```javascript
 // Replace with your actual Render domain
-const WEBSOCKET_URL = "wss://recreation-booking-bot.onrender.com:8765";
+// IMPORTANT: Use /ws endpoint, NOT port 8765
+const WEBSOCKET_URL = "wss://recreation-booking-bot.onrender.com/ws";
 
 // Connect to WebSocket
 const ws = new WebSocket(WEBSOCKET_URL);
@@ -131,8 +133,10 @@ https://recreation-booking-bot.onrender.com
 ### Step 3: Your WebSocket URL
 Your WebSocket URL will be:
 ```
-wss://recreation-booking-bot.onrender.com:8765
+wss://recreation-booking-bot.onrender.com/ws
 ```
+
+**Note:** Use `/ws` endpoint, NOT port 8765!
 
 ### Step 4: Update Chrome Extension
 Replace the WebSocket URL in your extension code with the one above.
@@ -183,10 +187,10 @@ asyncio.run(test())
 **Solution:** Use `wss://` for production, `ws://` for localhost
 
 ### Issue 2: "Connection refused on port 8765"
-**Cause:** Render might not expose custom ports directly
-**Solution:** Use the Flask WebSocket endpoint instead:
-- Change extension to connect to: `wss://your-domain.onrender.com/ws`
-- This uses Flask-Sock which runs on the same port as Flask (5000)
+**Cause:** Port 8765 is disabled in production (Render.com doesn't expose custom ports)
+**Solution:** This is expected! Always use:
+- `wss://your-domain.onrender.com/ws` (correct)
+- NOT `wss://your-domain.onrender.com:8765` (wrong)
 
 ### Issue 3: "Mixed content error"
 **Cause:** Trying to use `ws://` from an `https://` page
@@ -194,9 +198,9 @@ asyncio.run(test())
 
 ---
 
-## 💡 Recommended Approach for Chrome Extension
+## 💡 Production WebSocket Configuration
 
-**Use the Flask WebSocket endpoint** instead of direct port 8765:
+**ALWAYS use the Flask-Sock endpoint on Render.com:**
 
 ```javascript
 // In your Chrome extension
@@ -206,11 +210,12 @@ const wsUrl = `wss://${domain}/ws`;  // Note: /ws endpoint, no port number
 const ws = new WebSocket(wsUrl);
 ```
 
-**Why?**
-- ✅ No need to expose port 8765
-- ✅ Works with Render's default configuration
+**Why Flask-Sock instead of port 8765?**
+- ✅ Render.com doesn't expose custom ports (8765 won't work)
+- ✅ Flask-Sock runs on the same port as Flask (5000)
 - ✅ Simpler URL structure
 - ✅ Same SSL certificate
+- ✅ No additional configuration needed
 
 ---
 
@@ -221,20 +226,19 @@ const ws = new WebSocket(wsUrl);
 - No configuration needed
 
 ### For Chrome Extension
-**Recommended URL:**
+**Production URL (Render.com):**
 ```
 wss://your-domain.onrender.com/ws
 ```
 
-**Alternative URL (if port 8765 is exposed):**
+**Local Development URL:**
 ```
-wss://your-domain.onrender.com:8765
+ws://localhost:5000/ws
 ```
 
 ### Environment Variables (Already Configured ✅)
-- `WEBSOCKET_HOST=0.0.0.0` - Allows external connections
-- `WEBSOCKET_PORT=8765` - WebSocket port
-- `PORT=5000` - Flask port
+- `ENABLE_STANDALONE_WEBSOCKET=false` - Disables port 8765 in production
+- `PORT=5000` - Flask port (WebSocket runs on this port via Flask-Sock)
 
 ---
 
