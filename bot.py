@@ -41,8 +41,9 @@ MAX_QUANTITY_PER_TAB = int(os.getenv("MAX_QUANTITY_PER_TAB", "50"))
 IS_PRODUCTION = os.getenv("RENDER") is not None or os.getenv("FLASK_ENV") == "production"
 ENABLE_STANDALONE_WEBSOCKET = os.getenv("ENABLE_STANDALONE_WEBSOCKET", "false").lower() == "true"
 
-connected_clients = set()
-web_clients = set()  # Track web interface clients
+connected_clients = set()  # Extension clients (standalone WebSocket - disabled in production)
+extension_clients = set()  # Extension clients via Flask-Sock
+web_clients = set()  # Web interface clients via Flask-Sock
 pending_tasks = {}  # Track pending URL triggers
 active_bookings = {}  # Track active bookings
 main_event_loop = None  # Store reference to main asyncio event loop
@@ -336,9 +337,11 @@ def add_booking_log(booking_id):
 
 @sock.route('/ws')
 def websocket_handler(ws):
-    """Handle WebSocket connections from web interface"""
+    """Handle WebSocket connections from web interface AND Chrome extension"""
+    # Initially add to web_clients, will move to extension_clients if "hello" message received
     web_clients.add(ws)
-    logger.info(f"✅ Web client connected (total {len(web_clients)})")
+    is_extension = False
+    logger.info(f"✅ Client connected via Flask-Sock (total web: {len(web_clients)}, extension: {len(extension_clients)})")
 
     try:
         while True:
@@ -346,20 +349,57 @@ def websocket_handler(ws):
             if message:
                 try:
                     data = json.loads(message)
+                    msg_type = data.get("type")
+
+                    # Check if this is an extension connection (hello message)
+                    if msg_type == "hello" and not is_extension:
+                        # Move from web_clients to extension_clients
+                        web_clients.discard(ws)
+                        extension_clients.add(ws)
+                        is_extension = True
+                        logger.info(f"👋 Chrome extension connected via Flask-Sock (total: {len(extension_clients)})")
+
+                        # Send welcome message
+                        ws.send(json.dumps({"type": "welcome", "message": "Bot is ready"}))
+
+                        # Send configuration to extension
+                        try:
+                            config = config_manager.load_config()
+                            if config:
+                                ws.send(json.dumps({
+                                    "type": "config",
+                                    "email": config.get("email"),
+                                    "password": config.get("password")
+                                }))
+                                logger.info("📤 Sent configuration to extension via Flask-Sock")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to send configuration to extension: {e}")
+
+                        # Notify web clients
+                        broadcast_to_web({"type": "log", "message": "✅ Chrome extension connected", "level": "success"})
+                        continue
+
                     # Schedule the coroutine in the main event loop from Flask thread
                     if main_event_loop:
-                        asyncio.run_coroutine_threadsafe(handle_web_message(data, ws), main_event_loop)
+                        if is_extension:
+                            asyncio.run_coroutine_threadsafe(handle_extension_message(data, ws), main_event_loop)
+                        else:
+                            asyncio.run_coroutine_threadsafe(handle_web_message(data, ws), main_event_loop)
                     else:
                         logger.error("❌ Main event loop not available")
                 except json.JSONDecodeError as e:
-                    logger.error(f"❌ Invalid JSON from web client: {e}")
+                    logger.error(f"❌ Invalid JSON from client: {e}")
                 except Exception as e:
-                    logger.error(f"❌ Error handling web message: {e}")
+                    logger.error(f"❌ Error handling message: {e}")
     except Exception as e:
-        logger.warning(f"❌ Web client disconnected: {e}")
+        logger.warning(f"❌ Client disconnected: {e}")
     finally:
-        web_clients.discard(ws)
-        logger.info(f"Remaining web clients: {len(web_clients)}")
+        if is_extension:
+            extension_clients.discard(ws)
+            logger.info(f"Remaining extension clients: {len(extension_clients)}")
+        else:
+            web_clients.discard(ws)
+            logger.info(f"Remaining web clients: {len(web_clients)}")
 
 async def handle_web_message(data: dict, ws):
     """Handle messages from web interface"""
@@ -537,6 +577,75 @@ def parse_trigger_datetime(trigger_datetime: str):
         raise ValueError(f"Trigger datetime must be in the future. Provided: {target_time}, Current: {now}")
 
     return target_time
+
+async def handle_extension_message(data: dict, ws):
+    """Handle messages from Chrome extension via Flask-Sock"""
+    msg_type = data.get("type")
+
+    if msg_type == "ack":
+        # Acknowledgment that URL was stored
+        status = data.get("status")
+        url = data.get("url")
+        if status == "stored":
+            logger.info(f"✅ Extension confirmed URL stored: {url}")
+            broadcast_to_web({"type": "log", "message": f"✅ Extension confirmed URL stored", "level": "success"})
+        elif status == "error":
+            logger.error(f"❌ Extension failed to store URL: {data.get('error')}")
+            broadcast_to_web({"type": "log", "message": f"❌ Extension failed to store URL: {data.get('error')}", "level": "error"})
+
+    elif msg_type == "session_status":
+        # Session check result
+        status = data.get("status")
+        url = data.get("url")
+        username = data.get("username")
+        if status == "already_logged_in":
+            logger.info(f"✅ User already logged in as '{username}' on {url}")
+            broadcast_to_web({"type": "log", "message": f"✅ Already logged in as '{username}'", "level": "success"})
+        elif status == "not_logged_in":
+            logger.info(f"🔓 User not logged in on {url}, will attempt auto-login")
+            broadcast_to_web({"type": "log", "message": "🔓 Not logged in, attempting auto-login...", "level": "info"})
+
+    elif msg_type == "login_result":
+        # Login attempt result
+        status = data.get("status")
+        url = data.get("url")
+        if status == "success":
+            username = data.get("username")
+            logger.info(f"🎉 LOGIN SUCCESS: Logged in as '{username}' on {url}")
+            broadcast_to_web({"type": "log", "message": f"🎉 Login successful as '{username}'", "level": "success"})
+        elif status == "failed":
+            error = data.get("error")
+            logger.error(f"❌ LOGIN FAILED on {url}: {error}")
+            broadcast_to_web({"type": "log", "message": f"❌ Login failed: {error}", "level": "error"})
+
+    elif msg_type == "pre_login_result":
+        # Pre-login trigger result
+        status = data.get("status")
+        url = data.get("url")
+        if status == "success":
+            if data.get("alreadyLoggedIn"):
+                username = data.get("username")
+                logger.info(f"✅ Pre-login check: Already logged in as '{username}' on {url}")
+                broadcast_to_web({"type": "log", "message": f"✅ Pre-login: Already logged in as '{username}'", "level": "success"})
+            elif data.get("loggedIn"):
+                username = data.get("username")
+                logger.info(f"🎉 Pre-login: Successfully logged in as '{username}' on {url}")
+                broadcast_to_web({"type": "log", "message": f"🎉 Pre-login: Logged in as '{username}'", "level": "success"})
+        elif status == "error":
+            error = data.get("error")
+            logger.error(f"❌ Pre-login failed on {url}: {error}")
+            broadcast_to_web({"type": "log", "message": f"❌ Pre-login failed: {error}", "level": "error"})
+
+    elif msg_type == "result":
+        # Final result from extension
+        status = data.get("status")
+        if status == "success":
+            logger.info(f"✅ Extension completed successfully")
+            broadcast_to_web({"type": "log", "message": "✅ Booking completed successfully", "level": "success"})
+        elif status == "error":
+            error = data.get("error")
+            logger.error(f"❌ Extension error: {error}")
+            broadcast_to_web({"type": "log", "message": f"❌ Error: {error}", "level": "error"})
 
 def broadcast_to_web(message: dict):
     """Send message to all web clients (synchronous for Flask-Sock)"""
@@ -978,9 +1087,12 @@ async def handle_client_message(data: dict, websocket):
 # 🌍 Broadcast Utility
 # ==============================
 async def broadcast(message: dict):
-    """Send message to all connected clients"""
+    """Send message to all connected extension clients (both standalone and Flask-Sock)"""
+    msg = json.dumps(message)
+    sent_count = 0
+
+    # Send to standalone WebSocket clients (if enabled)
     if connected_clients:
-        msg = json.dumps(message)
         results = await asyncio.gather(
             *(ws.send(msg) for ws in connected_clients),
             return_exceptions=True
@@ -988,9 +1100,24 @@ async def broadcast(message: dict):
         # Log any send failures
         for result in results:
             if isinstance(result, Exception):
-                logger.error(f"Failed to send to client: {result}")
+                logger.error(f"Failed to send to standalone client: {result}")
+            else:
+                sent_count += 1
+
+    # Send to Flask-Sock extension clients (production mode)
+    if extension_clients:
+        for ws in list(extension_clients):
+            try:
+                ws.send(msg)
+                sent_count += 1
+            except Exception as e:
+                logger.error(f"Failed to send to Flask-Sock extension client: {e}")
+                extension_clients.discard(ws)
+
+    if sent_count == 0:
+        logger.warning("⚠️ No extension clients connected to send message.")
     else:
-        logger.warning("⚠️ No clients connected to send message.")
+        logger.info(f"📤 Sent message to {sent_count} extension client(s)")
 
 # ==============================
 # ⏰ Schedule + Trigger Logic
@@ -1463,11 +1590,21 @@ async def cli_task():
                 break
 
             if line.lower() == "status":
-                logger.info(f"📊 Connected clients: {len(connected_clients)}")
+                total_extensions = len(connected_clients) + len(extension_clients)
+                logger.info(f"📊 Connected extension clients: {total_extensions}")
+
                 if connected_clients:
+                    logger.info(f"  Standalone WebSocket (port 8765): {len(connected_clients)}")
                     for i, client in enumerate(connected_clients, 1):
-                        logger.info(f"  {i}. {client.remote_address}")
-                else:
+                        logger.info(f"    {i}. {client.remote_address}")
+
+                if extension_clients:
+                    logger.info(f"  Flask-Sock (/ws endpoint): {len(extension_clients)}")
+
+                if web_clients:
+                    logger.info(f"  Web interface clients: {len(web_clients)}")
+
+                if total_extensions == 0 and len(web_clients) == 0:
                     logger.info("  No clients connected")
                 continue
 
