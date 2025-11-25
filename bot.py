@@ -581,6 +581,7 @@ def parse_trigger_datetime(trigger_datetime: str):
 async def handle_extension_message(data: dict, ws):
     """Handle messages from Chrome extension via Flask-Sock"""
     msg_type = data.get("type")
+    booking_id = data.get("booking_id")  # Extract booking_id from all messages
 
     if msg_type == "ack":
         # Acknowledgment that URL was stored
@@ -589,9 +590,27 @@ async def handle_extension_message(data: dict, ws):
         if status == "stored":
             logger.info(f"✅ Extension confirmed URL stored: {url}")
             broadcast_to_web({"type": "log", "message": f"✅ Extension confirmed URL stored", "level": "success"})
+
+            # Update booking status
+            if booking_id:
+                broadcast_to_web({
+                    "type": "booking_update",
+                    "booking_id": booking_id,
+                    "status": "extension_ready",
+                    "message": "Extension confirmed URL stored and ready"
+                })
         elif status == "error":
             logger.error(f"❌ Extension failed to store URL: {data.get('error')}")
             broadcast_to_web({"type": "log", "message": f"❌ Extension failed to store URL: {data.get('error')}", "level": "error"})
+
+            # Update booking status
+            if booking_id:
+                broadcast_to_web({
+                    "type": "booking_update",
+                    "booking_id": booking_id,
+                    "status": "error",
+                    "message": f"Extension error: {data.get('error')}"
+                })
 
     elif msg_type == "session_status":
         # Session check result
@@ -601,9 +620,27 @@ async def handle_extension_message(data: dict, ws):
         if status == "already_logged_in":
             logger.info(f"✅ User already logged in as '{username}' on {url}")
             broadcast_to_web({"type": "log", "message": f"✅ Already logged in as '{username}'", "level": "success"})
+
+            # Update booking status
+            if booking_id:
+                broadcast_to_web({
+                    "type": "booking_update",
+                    "booking_id": booking_id,
+                    "status": "logged_in",
+                    "message": f"Already logged in as '{username}'"
+                })
         elif status == "not_logged_in":
             logger.info(f"🔓 User not logged in on {url}, will attempt auto-login")
             broadcast_to_web({"type": "log", "message": "🔓 Not logged in, attempting auto-login...", "level": "info"})
+
+            # Update booking status
+            if booking_id:
+                broadcast_to_web({
+                    "type": "booking_update",
+                    "booking_id": booking_id,
+                    "status": "logging_in",
+                    "message": "Attempting auto-login..."
+                })
 
     elif msg_type == "login_result":
         # Login attempt result
@@ -613,10 +650,28 @@ async def handle_extension_message(data: dict, ws):
             username = data.get("username")
             logger.info(f"🎉 LOGIN SUCCESS: Logged in as '{username}' on {url}")
             broadcast_to_web({"type": "log", "message": f"🎉 Login successful as '{username}'", "level": "success"})
+
+            # Update booking status
+            if booking_id:
+                broadcast_to_web({
+                    "type": "booking_update",
+                    "booking_id": booking_id,
+                    "status": "logged_in",
+                    "message": f"Login successful as '{username}'"
+                })
         elif status == "failed":
             error = data.get("error")
             logger.error(f"❌ LOGIN FAILED on {url}: {error}")
             broadcast_to_web({"type": "log", "message": f"❌ Login failed: {error}", "level": "error"})
+
+            # Update booking status
+            if booking_id:
+                broadcast_to_web({
+                    "type": "booking_update",
+                    "booking_id": booking_id,
+                    "status": "error",
+                    "message": f"Login failed: {error}"
+                })
 
     elif msg_type == "pre_login_result":
         # Pre-login trigger result
@@ -627,25 +682,128 @@ async def handle_extension_message(data: dict, ws):
                 username = data.get("username")
                 logger.info(f"✅ Pre-login check: Already logged in as '{username}' on {url}")
                 broadcast_to_web({"type": "log", "message": f"✅ Pre-login: Already logged in as '{username}'", "level": "success"})
+
+                # Update booking status
+                if booking_id:
+                    broadcast_to_web({
+                        "type": "booking_update",
+                        "booking_id": booking_id,
+                        "status": "pre_login_complete",
+                        "message": f"Pre-login: Already logged in as '{username}'"
+                    })
             elif data.get("loggedIn"):
                 username = data.get("username")
                 logger.info(f"🎉 Pre-login: Successfully logged in as '{username}' on {url}")
                 broadcast_to_web({"type": "log", "message": f"🎉 Pre-login: Logged in as '{username}'", "level": "success"})
+
+                # Update booking status
+                if booking_id:
+                    broadcast_to_web({
+                        "type": "booking_update",
+                        "booking_id": booking_id,
+                        "status": "pre_login_complete",
+                        "message": f"Pre-login: Logged in as '{username}'"
+                    })
         elif status == "error":
             error = data.get("error")
             logger.error(f"❌ Pre-login failed on {url}: {error}")
             broadcast_to_web({"type": "log", "message": f"❌ Pre-login failed: {error}", "level": "error"})
 
+            # Update booking status
+            if booking_id:
+                broadcast_to_web({
+                    "type": "booking_update",
+                    "booking_id": booking_id,
+                    "status": "error",
+                    "message": f"Pre-login failed: {error}"
+                })
+
     elif msg_type == "result":
         # Final result from extension
         status = data.get("status")
+        message = data.get("message", "")
+
         if status == "success":
-            logger.info(f"✅ Extension completed successfully")
-            broadcast_to_web({"type": "log", "message": "✅ Booking completed successfully", "level": "success"})
+            logger.info(f"✅ Extension completed successfully: {message}")
+            broadcast_to_web({"type": "log", "message": f"✅ Booking completed: {message}", "level": "success"})
+
+            # Update booking status to completed
+            if booking_id:
+                broadcast_to_web({
+                    "type": "booking_update",
+                    "booking_id": booking_id,
+                    "status": "completed",
+                    "message": message or "Booking completed successfully"
+                })
+        elif status == "partial":
+            logger.warning(f"⚠️ Extension completed with partial success: {message}")
+            broadcast_to_web({"type": "log", "message": f"⚠️ Partial success: {message}", "level": "warning"})
+
+            # Update booking status to partial
+            if booking_id:
+                broadcast_to_web({
+                    "type": "booking_update",
+                    "booking_id": booking_id,
+                    "status": "partial",
+                    "message": message or "Some bookings succeeded, some failed"
+                })
         elif status == "error":
-            error = data.get("error")
+            error = data.get("error", message)
             logger.error(f"❌ Extension error: {error}")
             broadcast_to_web({"type": "log", "message": f"❌ Error: {error}", "level": "error"})
+
+            # Update booking status to failed
+            if booking_id:
+                broadcast_to_web({
+                    "type": "booking_update",
+                    "booking_id": booking_id,
+                    "status": "failed",
+                    "message": error or "Booking failed"
+                })
+
+    elif msg_type == "booking_result":
+        # Detailed result for individual slot booking
+        slot = data.get("slot")
+        slot_status = data.get("status")
+        steps = data.get("steps", {})
+        timings = data.get("timings", {})
+        error = data.get("error")
+        requested_qty = data.get("requestedQuantity")
+        available_qty = data.get("availableQuantity")
+        actual_qty = data.get("actualQuantity")
+
+        # Log detailed result
+        if slot_status == "success":
+            logger.info(f"✅ Slot '{slot}' booked successfully - Quantity: {actual_qty}/{requested_qty}")
+            msg = f"✅ Slot '{slot}' booked: {actual_qty} ticket(s)"
+            if available_qty and available_qty < requested_qty:
+                msg += f" (only {available_qty} available)"
+            broadcast_to_web({"type": "log", "message": msg, "level": "success"})
+        else:
+            logger.error(f"❌ Slot '{slot}' booking failed: {error}")
+            broadcast_to_web({"type": "log", "message": f"❌ Slot '{slot}' failed: {error}", "level": "error"})
+
+        # Update booking with detailed event log
+        if booking_id:
+            event_log = {
+                "timestamp": data.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                "slot": slot,
+                "status": slot_status,
+                "steps": steps,
+                "timings": timings,
+                "quantities": {
+                    "requested": requested_qty,
+                    "available": available_qty,
+                    "actual": actual_qty
+                },
+                "error": error
+            }
+
+            broadcast_to_web({
+                "type": "booking_event_log",
+                "booking_id": booking_id,
+                "event": event_log
+            })
 
 def broadcast_to_web(message: dict):
     """Send message to all web clients (synchronous for Flask-Sock)"""
